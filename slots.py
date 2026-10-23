@@ -1,4 +1,7 @@
 import random
+import os
+import sys
+import time
 
 # Betting limits
 MAX_LINES = 5  # lines 1-3 are the rows, line 4 is the "\" diagonal, line 5 is the "/" diagonal
@@ -11,27 +14,52 @@ COLS = 3
 
 WILD = "W"
 
-# How many times each symbol appears in the pool.
-# Symbols that appear more often are more likely to be selected.
-symbol_count = {
-    "A": 2,
-    "B": 4,
-    "C": 6,
-    "D": 8,
-    "W": 2 #Wild card
+MAX_AUTO_SPINS = 100
+FRAME_DELAY = .06
+
+SYMBOLS = {
+    "A": {"count": 2, "value": 5},
+    "B": {"count": 4, "value": 4},
+    "C": {"count": 6, "value": 3},
+    "D": {"count": 8, "value": 2},
+    "W": {"count": 2, "value": 5}
 }
 
-# The payout value assigned to each symbol.
-symbol_value = {
-    "A": 5,
-    "B": 4,
-    "C": 3,
-    "D": 2,
-    "W": 5
+if os.name == "nt":
+    os.system("")
+
+
+USE_COLOR = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
+RESET = "\033[0m"
+BOLD = "\033[1m"
+REVERSE = "\033[7m"
+SYMBOL_COLORS = {
+    "A": "\033[91m",
+    "B": "\033[93m",
+    "C": "\033[92m",
+    "D": "\033[96m",
+    "W": "\033[95m",
 }
+
+
 LINE_NAMES = ["Top row", "Middle row", "Bottom row", "Diagonal \\", "Diagonal /"]
 
-def get_paylines(rows, cols):
+def paint(text: str, *styles: str) -> str:
+    #Wrap text in colr codes, or return it unchanged if color is off.
+    if not USE_COLOR:
+        return text
+    return "".joint(styles) + text + RESET
+
+def format_money(amount: int) -> str:
+    #Turn 1234 into '1,234' and -5 into '-$5'. 
+    sign = "-" if amount < 0 else ""
+    return f"{sign}${abs(amount):,}"
+
+
+
+def get_paylines(rows: int, cols: int) -> list:
+    #Return every payline as a list of (column, row) positions.
     paylines = []
 
     # Lines 1-3: the horizontal rows.
@@ -47,11 +75,11 @@ def get_paylines(rows, cols):
 PAYLINES = get_paylines(ROWS, COLS)
 
 
-
 def check_winnings(columns, lines, bet, values):
     # Keep track of the total winnings and winning combinations.
     winnings = 0
     winning_lines = []
+    winning_cells = set()
 
     # Only check the lines the player actually bet on.
     for line_number, positions in enumerate(PAYLINES[:lines], start = 1):
@@ -61,17 +89,16 @@ def check_winnings(columns, lines, bet, values):
         if all(s == symbol or s == WILD for s in symbols):
             winnings += values[symbol] * bet
             winning_lines.append(LINE_NAMES[line_number - 1])
-    return winnings, winning_lines
+    return winnings, winning_lines, winning_cells 
 
 
 
-def get_slot_machine_spin(rows, cols, symbols):
+def get_slot_machine_spin(rows: int, cols: int, symbols: dict) -> list:
     # Build a list containing every symbol the correct number of times.
     all_symbols = []
 
-    for symbol, count in symbols.items():
-        for _ in range(count):
-            all_symbols.append(symbol)
+    for symbol, info in symbols.items():
+            all_symbols.extend([symbol] * info["count"])
 
     # Store the slot machine as a list of columns.
     columns = []
@@ -84,21 +111,28 @@ def get_slot_machine_spin(rows, cols, symbols):
         # times in a column than its count allows (e.g. only two "A"s).
         current_symbols = all_symbols[:]
 
-        for row in range(rows):
-            # Randomly select one of the remaining symbols.
+        for _ in range(rows):
             value = random.choice(current_symbols)
-
-            # Remove the selected symbol from this column's pool.
             current_symbols.remove(value)
-
-            # Add the symbol to the current column.
             column.append(value)
 
-        # Add the completed column to the slot machine.
         columns.append(column)
-
-    # Return the completed slot machine.
     return columns
+
+def format_grid(columns: list, winning_cells=frozenset()) -> list:
+
+    lines = []
+    for row in range(len(columns[0])):
+        cells = []
+        for col, column in enumerate(columns):
+            symbol = column[row]
+            color = SYMBOL_COLORS.get(symbol, "")
+            if (col, row) in winning_cells:
+                 cells.append(paint(f"[{symbol}]", BOLD, REVERSE, colour))
+            else:
+                cells.append(paint(f" {symbol} ", colour))
+        lines.append(" | ".join(cells))
+    return lines
 
 
 def print_slot_machine(columns):
