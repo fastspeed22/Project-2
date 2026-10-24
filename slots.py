@@ -46,13 +46,13 @@ SYMBOL_COLORS = {
 LINE_NAMES = ["Top row", "Middle row", "Bottom row", "Diagonal \\", "Diagonal /"]
 
 def paint(text: str, *styles: str) -> str:
-    #Wrap text in colr codes, or return it unchanged if color is off.
+    #Wrap text in colour codes, or return it unchanged if colour is off.
     if not USE_COLOR:
         return text
-    return "".joint(styles) + text + RESET
+    return "".join(styles) + text + RESET
 
 def format_money(amount: int) -> str:
-    #Turn 1234 into '1,234' and -5 into '-$5'. 
+    #Turn 1234 into '$1,234' and -5 into '-$5'.
     sign = "-" if amount < 0 else ""
     return f"{sign}${abs(amount):,}"
 
@@ -75,7 +75,7 @@ def get_paylines(rows: int, cols: int) -> list:
 PAYLINES = get_paylines(ROWS, COLS)
 
 
-def check_winnings(columns, lines, bet, values):
+def check_winnings(columns: list, lines: int, bet: int, symbols: dict):
     # Keep track of the total winnings and winning combinations.
     winnings = 0
     winning_lines = []
@@ -83,13 +83,16 @@ def check_winnings(columns, lines, bet, values):
 
     # Only check the lines the player actually bet on.
     for line_number, positions in enumerate(PAYLINES[:lines], start = 1):
-        symbols = [columns[col][row] for col, row in positions]
-        symbol = next((s for s in symbols if s != WILD), WILD)
+        # Named line_symbols so it doesn't overwrite the 'symbols' dictionary above.
+        line_symbols = [columns[col][row] for col, row in positions]
+        symbol = next((s for s in line_symbols if s != WILD), WILD)
 
-        if all(s == symbol or s == WILD for s in symbols):
-            winnings += values[symbol] * bet
+        if all(s == symbol or s == WILD for s in line_symbols):
+            winnings += symbols[symbol]["value"] * bet
             winning_lines.append(LINE_NAMES[line_number - 1])
-    return winnings, winning_lines, winning_cells 
+            winning_cells.update(positions)
+
+    return winnings, winning_lines, winning_cells
 
 
 
@@ -98,17 +101,12 @@ def get_slot_machine_spin(rows: int, cols: int, symbols: dict) -> list:
     all_symbols = []
 
     for symbol, info in symbols.items():
-            all_symbols.extend([symbol] * info["count"])
+        all_symbols.extend([symbol] * info["count"])
 
     # Store the slot machine as a list of columns.
     columns = []
-
-    for col in range(cols):
+    for _ in range(cols):
         column = []
-
-        # Make a fresh copy for this column.
-        # Removing a selected symbol means a symbol can never appear more
-        # times in a column than its count allows (e.g. only two "A"s).
         current_symbols = all_symbols[:]
 
         for _ in range(rows):
@@ -126,111 +124,139 @@ def format_grid(columns: list, winning_cells=frozenset()) -> list:
         cells = []
         for col, column in enumerate(columns):
             symbol = column[row]
-            color = SYMBOL_COLORS.get(symbol, "")
+            colour = SYMBOL_COLORS.get(symbol, "")
             if (col, row) in winning_cells:
-                 cells.append(paint(f"[{symbol}]", BOLD, REVERSE, colour))
+                cells.append(paint(f"[{symbol}]", BOLD, REVERSE, colour))
             else:
                 cells.append(paint(f" {symbol} ", colour))
         lines.append(" | ".join(cells))
     return lines
 
 
-def print_slot_machine(columns):
-    # Print one row at a time, even though the data is stored by column.
-    for row in range(len(columns[0])):
+def print_slot_machine(columns: list, winning_cells=frozenset()) -> None:
+    for line in format_grid(columns, winning_cells):
+        print(line)
 
-        # Print each column's symbol for the current row.
-        for i, column in enumerate(columns):
-            if i != len(columns) - 1:
-                # Print a separator between symbols.
-                print(column[row], end=" | ")
+def animate_spin(final_columns: list) -> None:
+    if not USE_COLOR:
+        return
+
+    symbols = list(SYMBOLS)
+    cols = len(final_columns)
+    rows = len(final_columns[0])
+    stop_frames = [8 + 5 * col for col in range(cols)]
+
+    for frame in range(stop_frames[-1] + 1):
+        shown = []
+        for col in range(cols):
+            if frame >= stop_frames[col]:
+                shown.append(final_columns[col])
             else:
-                # Do not add a separator after the last symbol.
-                print(column[row], end="")
+                shown.append([random.choice(symbols) for _ in range (rows)])
 
-        # Move to the next printed row.
-        print()
+        # These three lines belong to the frame loop (not the column loop),
+        # so the whole grid is drawn once per frame.
+        print("\n".join(format_grid(shown)))
+        time.sleep(FRAME_DELAY)
+        print(f"\033[{rows}A", end="")
 
-def get_int(prompt, minimum, maximum=None):
+def get_int(prompt: str, minimum: int, maximum=None, shortcuts=None) -> int:
 
+    shortcuts = shortcuts or {}
     while True:
-        text = input(prompt).strip()
+        text = input(prompt).strip().lower()
+
+        if text in shortcuts:
+            return shortcuts[text]
 
         try:
             amount = int(text)
         except ValueError:
-            print("Please enter a whole number")
+            print("Please enter a whole number.")
             continue
 
         if amount < minimum:
-            print(f"Amount must be at least {minimum}")
+            print(f"Amount must be at least {minimum}.")
         elif maximum is not None and amount > maximum:
             print(f"Amount must be no more than {maximum}.")
         else:
             return amount
 
-def deposit():
-    return get_int("what would you like to deposit $", 1)
+def deposit() -> int:
+    return get_int("What would you like to deposit? $", 1)
 
-
-
-def get_number_of_lines(max_lines):
-    return get_int(f"Enter the number of lines to bet on (1-{max_lines})? ", 1, max_lines)
-
-
-def get_bet(max_bet):
-    return get_int(
-        f"What would you like to bet on each line? (${MIN_BET}-${max_bet}) $",
+def ask_for_bet(balance: int):
+    max_lines = min(MAX_LINES, balance // MIN_BET)
+    lines = get_int(f"Enter the number of lines to bet on (1-{max_lines})? ", 1, max_lines)
+    max_bet = min(MAX_BET, balance // lines)
+    bet = get_int(
+        f"What would you like to bet on each line? (${MIN_BET}-${max_bet}, or 'max') $",
         MIN_BET,
         max_bet,
+        shortcuts={"max": max_bet, "m": max_bet},
     )
+    return lines, bet
 
-
-def spin(balance):
-    # The player can't bet on more lines than they can afford at the minimum bet.
-    max_lines = min(MAX_LINES, balance // MIN_BET)
-    lines = get_number_of_lines(max_lines)
-
-    # The biggest bet per line they can afford (and the game allows).
-    max_bet = min(MAX_BET, balance // lines)
-    bet = get_bet(max_bet)
+def play_round(lines: int, bet: int, animate: bool = True, verbose: bool = True) -> int:
     total_bet = bet * lines
+    slots = get_slot_machine_spin(ROWS, COLS, SYMBOLS)
+    winnings, winning_lines, winning_cells = check_winnings(slots, lines, bet, SYMBOLS)
+    net = winnings - total_bet
 
-    print(
-        f"You are betting ${bet} on {lines} line{'s' if lines != 1 else ''}. "
-        f"Total bet is equal to: ${total_bet}"
-    )
+    if verbose:
+        print(f"You are betting {format_money(bet)} on {lines} line{'s' if lines != 1 else ''}. "
+              f"Total bet is equal to: {format_money(total_bet)}")
+        if animate:
+            animate_spin(slots)
+        print_slot_machine(slots, winning_cells)
 
-    slots = get_slot_machine_spin(ROWS, COLS, symbol_count)
+        print(f"You won {format_money(winnings)}.")
+        if winning_lines:
+            print("You won on:", ", ".join(winning_lines))
+        else:
+            print("No winning lines this spin.")
 
-    print_slot_machine(slots)
+    # Outside the 'if verbose' block, so quiet (auto-spin) rounds return the result too.
+    return net
 
-    winnings, winning_lines = check_winnings( slots, lines, bet, symbol_value)
+def spin(balance: int) -> int:
+    lines, bet = ask_for_bet(balance)
+    return play_round(lines, bet)
 
-    print(f"You won ${winnings}.")
-    if winning_lines:
-        print("You won on:", ", ".join(winning_lines))
-    else:
-        print("No winning lines this spin.")
-    return winnings - total_bet
+def auto_spin(balance: int) -> int:
+    lines, bet = ask_for_bet(balance)
+    total_bet = lines * bet
+    count = get_int(f"How many spins? (1-{MAX_AUTO_SPINS}) ", 1, MAX_AUTO_SPINS)
 
-def main():
+    start = balance
+    for number in range(1, count + 1):
+        if balance < total_bet:
+            print("Not enough money for another spin, so auto-spin stopped.")
+            break
+        net = play_round(lines, bet, animate=False, verbose=False)
+        balance += net
+        print(f"Spin {number}: {format_money(net):>7} -> balance {format_money(balance)}")
 
+    return balance - start
+
+def main() -> None:
     balance = deposit()
 
     while balance >= MIN_BET:
-        print(f"Current balance is ${balance}")
+        print(f"Current balance is {format_money(balance)}")
 
-        answer = input("Press enter to play (q to quit).").strip().lower()
+        answer = input("Press enter to spin, a for auto spin, q to quit. ").strip().lower()
 
         if answer == "q":
             break
-        balance += spin(balance)
-
+        elif answer == "a":
+            balance += auto_spin(balance)
+        else:
+            balance += spin(balance)
     if balance < MIN_BET:
         print("You're out of money!")
 
-    print(f"you left with ${balance}")
+    print(f"You left with {format_money(balance)}")
 
 if __name__ == "__main__":
     main()
