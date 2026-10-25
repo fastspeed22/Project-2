@@ -17,6 +17,12 @@ WILD = "W"
 MAX_AUTO_SPINS = 100
 FRAME_DELAY = .06
 
+RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"] #All cards
+SUITS = ["S", "H", "D", "C" ] #Spades, Hearts, Diamonds, Clubs
+
+DEALER_STANDS_ON = 17 #the number that the dealer will stand on
+BLACKJACK_TARGET = 21 #the target for blackack
+
 SYMBOLS = {
     "A": {"count": 2, "value": 5},
     "B": {"count": 4, "value": 4},
@@ -239,24 +245,81 @@ def auto_spin(balance: int) -> int:
 
     return balance - start
 
-def main() -> None:
-    balance = deposit()
+def play_slots(balance):
+    #plays slots until user goes back to the menu
+    print("\n=== Slots ===")
 
     while balance >= MIN_BET:
         print(f"Current balance is {format_money(balance)}")
 
         answer = input("Press enter to spin, a for auto spin, q to quit. ").strip().lower()
-
+        
         if answer == "q":
             break
         elif answer == "a":
             balance += auto_spin(balance)
         else:
             balance += spin(balance)
+
+    return balance
+
+def get_suit_symbol() -> dict:
+    #Use suit pictues if the terminal will allow it
+    fancy = {"S": "\u2660", "H": "\u2665", "D": "\u2666", "C": "\u2663"}
+    try:
+        "".join(fancy.values()).encode(sys.stdout.encoding or "ascii")
+
+        return fancy
+    except (UnicodeEncodeError, LookupError):
+        return {"S": "S", "H": "H", "D": "D", "C": "C"}
+
+
+SUIT_SYMBOLS = get_suit_symbols()
+
+
+def build_deck() -> list:
+    #builds a new 52 card deck
+    deck = [(rank, suit) for rank in RANKS for suit in SUITS]
+    random.shuffle(deck)
+    return deck
+
+def card_value(rank: str) -> int:
+    #ahows what one card is worth. Ace starts as 11 and hand_value lowers them if need
+    if rank == "A":
+        return 11
+    if rank in ("J", "Q", "K"):
+        return 10
+    return int(rank)
+
+def hand_value(hand: list) -> int:
+    total = sum(card_value(rank) for rank, _ in hand)
+    aces = sum(1 for rank, _ in hand if rank == "A")
+    #Ace goes to one if someone busts
+    while total > BLACKJACK_TARGET and aces > 0:
+        total -= 10
+        aces -=1
+    return total
+
+
+def main() -> None:
+    print("Welcome to the casino!")
+    balance = deposit()
+
+    while balance >= MIN_BET:
+        print(f"Current balance is {format_money(balance)}")
+        choice = input("Pick a game: 1) Slots 2) Blackjack q) Quit. ").strip().lower
+        
+        if choice in ("1", "slots"):
+            balance = play_slots(balance)
+        elif choice in ("2", "blackjack"):
+            balance = play_blackjack(balance)
+        elif choice == "q":
+            break
+        else:
+            print("Please pick 1, 2, or q.")
+        
     if balance < MIN_BET:
         print("You're out of money!")
-
-    print(f"You left with {format_money(balance)}")
 
 if __name__ == "__main__":
     main()
