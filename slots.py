@@ -305,7 +305,7 @@ def is_blackjack(hand: list) -> bool:
     
 
 def format_card(card: tuple) -> str:
-    rank, suit, = card
+    rank, suit = card
     colour = RED if suit in ("H", "D") else ""
     return paint(f"[{rank}{SUIT_SYMBOLS[suit]}]", colour)
 
@@ -315,7 +315,7 @@ def show_hands(player_hand: list, dealer_hand: list, hide_dealer: bool = True) -
     else:
         dealer_text = " ".join(format_card(card) for card in dealer_hand)
         dealer_text += f"  ({hand_value(dealer_hand)})"
-    player_text = " ".join(format_card(card) fpr card in player_hand)
+    player_text = " ".join(format_card(card) for card in player_hand)
     print(f"Dealer: {dealer_text}")
     print(f"You:    {player_text}  ({hand_value(player_hand)})")
 
