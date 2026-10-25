@@ -300,6 +300,53 @@ def hand_value(hand: list) -> int:
         aces -=1
     return total
 
+def is_blackjack(hand: list) -> bool:
+    return len(hand) == 2 and hand_value(hand) == BLACK_TARGET
+    
+
+def format_card(card: tuple) -> str:
+    rank, suit, = card
+    colour = RED if suit in ("H", "D") else ""
+    return paint(f"[{rank}{SUIT_SYMBOLS[suit]}]", colour)
+
+def show_hands(player_hand: list, dealer_hand: list, hide_dealer: bool = True) -> None:
+    if hide_dealer:
+        dealer_text = format_card(dealer_hand[0]) + " [??]"
+    else:
+        dealer_text = " ".join(format_card(card) for card in dealer_hand)
+        dealer_text += f"  ({hand_value(dealer_hand)})"
+    player_text = " ".join(format_card(card) fpr card in player_hand)
+    print(f"Dealer: {dealer_text}")
+    print(f"You:    {player_text}  ({hand_value(player_hand)})")
+
+def pause(seconds: float = 0.6) -> None:
+    if USE_COLOR: 
+        time.sleep(seconds)
+
+def settle_blackjack(player_hand: list, dealer_hand: list, bet: int):
+    #decides who wins
+    player = hand_value(player_hand)
+    dealer = hand_value(dealer_hand)
+    player_natural = is_blackjack(player_hand)
+    dealer_natural = is_blackjack(dealer_hand)
+
+    if player_natural and dealer_natural:
+        return 0, "You both have blackjack. It's a push!"
+    if player_natural:
+        return bet * 3 // 2, "Blackjack!"
+    if dealer_natural
+        return -bet, "The dealer has blackjack."
+    if player > BLACKJACK_TARGET:
+        return -bet, f"Bust! You went over {BLACKJACK_TARGET}."
+    if dealer > BLACKJACK_TARGET:
+        return bet, "The dealer busts!"
+    if player > dealer:
+        return bet, f"You win, {player} beats {dealer}."
+    if player < dealer:
+        return -bet, f"You lose, {dealer} beats {player}."
+    return 0, f"It's a push, you both have {player}."
+
+
 
 def main() -> None:
     print("Welcome to the casino!")
