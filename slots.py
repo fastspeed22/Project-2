@@ -40,6 +40,7 @@ USE_COLOR = sys.stdout.isatty() and "NO_COLOR" not in os.environ
 RESET = "\033[0m"
 BOLD = "\033[1m"
 REVERSE = "\033[7m"
+RED = "\033[91m"  # used for hearts and diamonds
 SYMBOL_COLORS = {
     "A": "\033[91m",
     "B": "\033[93m",
@@ -203,7 +204,7 @@ def ask_for_bet(balance: int):
     )
     return lines, bet
 
-def play_round(lines: int, bet: int, animate: bool = True, verbose: bool = True) -> int:
+def play_round(lines: int, bet: int, animate: bool = True, verbose: bool = True, stats: dict = None) -> int:
     total_bet = bet * lines
     slots = get_slot_machine_spin(ROWS, COLS, SYMBOLS)
     winnings, winning_lines, winning_cells = check_winnings(slots, lines, bet, SYMBOLS)
@@ -222,14 +223,18 @@ def play_round(lines: int, bet: int, animate: bool = True, verbose: bool = True)
         else:
             print("No winning lines this spin.")
 
+    # Remember this spin for the statistics screen (stats is None when not tracking).
+    if stats is not None:
+        record_result(stats, "slots", total_bet, net)
+
     # Outside the 'if verbose' block, so quiet (auto-spin) rounds return the result too.
     return net
 
-def spin(balance: int) -> int:
+def spin(balance: int, stats: dict = None) -> int:
     lines, bet = ask_for_bet(balance)
-    return play_round(lines, bet)
+    return play_round(lines, bet, stats=stats)
 
-def auto_spin(balance: int) -> int:
+def auto_spin(balance: int, stats: dict = None) -> int:
     lines, bet = ask_for_bet(balance)
     total_bet = lines * bet
     count = get_int(f"How many spins? (1-{MAX_AUTO_SPINS}) ", 1, MAX_AUTO_SPINS)
@@ -239,31 +244,31 @@ def auto_spin(balance: int) -> int:
         if balance < total_bet:
             print("Not enough money for another spin, so auto-spin stopped.")
             break
-        net = play_round(lines, bet, animate=False, verbose=False)
+        net = play_round(lines, bet, animate=False, verbose=False, stats=stats)
         balance += net
         print(f"Spin {number}: {format_money(net):>7} -> balance {format_money(balance)}")
 
     return balance - start
 
-def play_slots(balance):
+def play_slots(balance, stats=None):
     #plays slots until user goes back to the menu
     print("\n=== Slots ===")
 
     while balance >= MIN_BET:
         print(f"Current balance is {format_money(balance)}")
 
-        answer = input("Press enter to spin, a for auto spin, q to quit. ").strip().lower()
+        answer = input("Press enter to spin, a for auto spin, q to go back to the menu. ").strip().lower()
         
         if answer == "q":
             break
         elif answer == "a":
-            balance += auto_spin(balance)
+            balance += auto_spin(balance, stats)
         else:
-            balance += spin(balance)
+            balance += spin(balance, stats)
 
     return balance
 
-def get_suit_symbol() -> dict:
+def get_suit_symbols() -> dict:
     #Use suit pictues if the terminal will allow it
     fancy = {"S": "\u2660", "H": "\u2665", "D": "\u2666", "C": "\u2663"}
     try:
@@ -301,11 +306,11 @@ def hand_value(hand: list) -> int:
     return total
 
 def is_blackjack(hand: list) -> bool:
-    return len(hand) == 2 and hand_value(hand) == BLACK_TARGET
+    return len(hand) == 2 and hand_value(hand) == BLACKJACK_TARGET
     
 
 def format_card(card: tuple) -> str:
-    rank, suit = card
+    rank, suit, = card
     colour = RED if suit in ("H", "D") else ""
     return paint(f"[{rank}{SUIT_SYMBOLS[suit]}]", colour)
 
@@ -334,7 +339,7 @@ def settle_blackjack(player_hand: list, dealer_hand: list, bet: int):
         return 0, "You both have blackjack. It's a push!"
     if player_natural:
         return bet * 3 // 2, "Blackjack!"
-    if dealer_natural
+    if dealer_natural:
         return -bet, "The dealer has blackjack."
     if player > BLACKJACK_TARGET:
         return -bet, f"Bust! You went over {BLACKJACK_TARGET}."
@@ -346,27 +351,220 @@ def settle_blackjack(player_hand: list, dealer_hand: list, bet: int):
         return -bet, f"You lose, {dealer} beats {player}."
     return 0, f"It's a push, you both have {player}."
 
+def player_turn(player_hand:list, dealer_hand: list, deck: list, bet: int, balance: int) -> int:
+    #lets player hit stand or double
+    first_choice = True
 
+    while hand_value(player_hand) < BLACKJACK_TARGET:
+        can_double = first_choice and balance >= bet * 2
+        options = "(h)it, (s)tand" + (", (d)ouble down" if can_double else "")
+        choice = input(f"{options}? ").strip().lower()
+
+        if choice in ("h", "hit"):
+            player_hand.append(deck.pop())
+            show_hands(player_hand, dealer_hand)
+            first_choice = False  # you can only double down on your first choice
+        elif choice in ("s", "stand"):
+            break
+        elif choice in ("d", "double") and can_double:
+            bet *= 2
+            player_hand.append(deck.pop())
+            print(f"You double your bet to {format_money(bet)} and take one last card.")
+            show_hands(player_hand, dealer_hand)
+            break
+        else:
+            print("Please pick one of the options shown.")
+    return bet
+
+def dealer_turn(dealer_hand: list, deck: list) -> None:
+    #The dealer will hit until 17 or more
+    while hand_value(dealer_hand) < DEALER_STANDS_ON:
+        pause()
+        card = deck.pop()
+        dealer_hand.append(card)
+        print(f"The dealer draws {format_card(card)}")
+
+def play_blackjack_round(bet: int, balance: int, stats: dict = None) -> int:
+    #Plays one round then either gives the player money or not
+    deck = build_deck()
+    player_hand = [deck.pop()]
+    dealer_hand = [deck.pop()]
+    player_hand.append(deck.pop())
+    dealer_hand.append(deck.pop())
+
+    print()
+    show_hands(player_hand, dealer_hand)
+
+    if not(is_blackjack(player_hand) or is_blackjack(dealer_hand)):
+        bet = player_turn(player_hand, dealer_hand, deck, bet, balance)
+
+        if hand_value(player_hand) <= BLACKJACK_TARGET:
+            print("\nThe dealer turns over the hidden card...")
+            dealer_turn(dealer_hand, deck)
+
+    print()
+    show_hands(player_hand, dealer_hand, hide_dealer=False)
+
+    net, message = settle_blackjack(player_hand, dealer_hand, bet)
+
+    # 'bet' is the final bet here, so it includes a double down.
+    if stats is not None:
+        record_result(stats, "blackjack", bet, net)
+
+    print(message)
+    if net > 0:
+        print(f"You win {format_money(net)}!")
+    elif net < 0:
+        print(f"You lose {format_money(-net)}.")
+    else:
+        print("Your money is returned.")
+    return net
+
+def play_blackjack(balance: int, stats: dict = None) -> int:
+    #Plays blackjack until player goes back to the menu
+    print("\n=== Blackjack ===")
+    print(f"Blackjack pays 3 to 2. The dealer stands on {DEALER_STANDS_ON}.")
+
+    while balance >= MIN_BET:
+        print(f"\nCurrent balance is {format_money(balance)}")
+
+        max_bet = min(MAX_BET, balance)
+        bet = get_int(
+            f"How much would you like to bet? (${MIN_BET}-${max_bet}, or 'max') $",
+            MIN_BET,
+            max_bet,
+            shortcuts={"max": max_bet, "m": max_bet},
+        )
+        balance += play_blackjack_round(bet, balance, stats)
+
+        if balance < MIN_BET:
+            break
+        answer = input("\nPress enter to play again, q to go back to menu. ").strip().lower()
+
+        if answer == "q":
+            break
+
+    return balance
+
+GAMES = ("slots", "blackjack")
+
+def new_stats(start_balance: int) -> dict:
+    #makes a new statistic dictionary
+    stats = {"start_balance": start_balance, "peak_balance": start_balance}
+    for game in GAMES:
+        stats[game] = {
+            "rounds": 0,
+            "wins": 0,
+            "losses": 0,
+            "pushes": 0,
+            "wagered": 0,
+            "net": 0,
+            "biggest_win": 0,
+            "biggest_loss": 0,
+        }
+    return stats
+
+def total_net(stats: dict) -> int:
+    return sum(stats[game]["net"] for game in GAMES)
+
+def total_rounds(stats: dict) -> int:
+    return sum (stats[game]["rounds"] for game in GAMES)
+
+def record_result(stats: dict, game: str, wagered: int, net: int) -> None:
+    game_stats = stats[game]
+    game_stats["rounds"] += 1
+    game_stats["wagered"] += wagered
+    game_stats["net"] += net
+
+    if net > 0:
+        game_stats["wins"] += 1
+        game_stats["biggest_win"] = max(game_stats["biggest_win"], net)
+    elif net < 0:
+        game_stats["losses"] += 1
+        game_stats["biggest_loss"] = max(game_stats["biggest_loss"], - net)
+
+    else:
+        game_stats["pushes"] += 1
+    stats["peak_balance"] = max(stats["peak_balance"], stats["start_balance"] + total_net(stats))
+
+def percent(part: int, whole: int) -> str:
+    if whole == 0:
+        return "n/a"
+    return f"{part / whole * 100:.1f}%"
+
+def format_net(amount: int) -> str:
+    if amount > 0:
+        return "+" + format_money(amount)
+    return format_money(amount)
+
+def print_stats(stats: dict, balance: int) -> None:
+    print("\n=== Your statistics ===")
+
+    if total_rounds(stats) == 0:
+        print("You haven't played anything yet.")
+        return
+
+    overall = [
+        ("Starting balance:", format_money(stats["start_balance"])),
+        ("peak balance:", format_money(stats["peak_balance"])),
+        ("Current balance:", format_money(balance)),
+        ("overall result:", format_net(total_net(stats))),
+    ]
+    for label, value in overall:
+        print(f"{label:<22}{value}")
+
+    for game in GAMES:
+        s = stats[game]
+        if s["rounds"] == 0:
+            continue
+
+        rows = [
+            ("Rounds played:", s["rounds"]),
+            ("Won:", f"{s['wins']} ({percent(s['wins'], s['rounds'])})"),
+            ("Lost:", f"{s['losses']} ({percent(s['losses'], s['rounds'])})"),
+            ("Even:", s["pushes"]),
+            ("Total wagered:", format_money(s["wagered"])),
+            ("Net result:", format_net(s["net"])),
+            ("Biggest win:", format_money(s["biggest_win"])),
+            ("Biggest loss:", format_money(s["biggest_loss"])),
+
+            ("return:", percent(s["wagered"] + s["net"], s["wagered"]))
+        ]
+        print(f"\n{game.capitalize()}")
+        for label, value in rows:
+            print(f"  {label:<20}{value}")
+
+    print()
+
+    
 
 def main() -> None:
     print("Welcome to the casino!")
     balance = deposit()
+    stats = new_stats(balance)
 
     while balance >= MIN_BET:
         print(f"Current balance is {format_money(balance)}")
-        choice = input("Pick a game: 1) Slots 2) Blackjack q) Quit. ").strip().lower
+        choice = input("Pick a game: 1) Slots  2) Blackjack 3) Stats  q) Quit. ").strip().lower()
         
         if choice in ("1", "slots"):
-            balance = play_slots(balance)
+            balance = play_slots(balance, stats)
         elif choice in ("2", "blackjack"):
-            balance = play_blackjack(balance)
+            balance = play_blackjack(balance, stats)
+        elif choice in ("3", "stats"):
+            print_stats(stats, balance)
         elif choice == "q":
             break
         else:
-            print("Please pick 1, 2, or q.")
+            print("Please pick 1, 2, 3 or q.")
         
     if balance < MIN_BET:
         print("You're out of money!")
+
+    print(f"You left with {format_money(balance)}")
+
+    if total_rounds(stats) > 0:
+        print_stats(stats, balance)
 
 if __name__ == "__main__":
     main()
